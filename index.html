@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><link rel="manifest" href="manifest.webmanifest"><meta name="description" content="Buku Kas Pribadi — catatan keuangan: dompet, transaksi, anggaran, utang-piutang, dan aset."><meta name="application-name" content="Buku Kas"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="Buku Kas"><meta name="theme-color" content="#F2F2F2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0A1128" media="(prefers-color-scheme: dark)"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"></head><body>
 <title>Buku Kas Pribadi</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,600..800&family=JetBrains+Mono:wght@400;500&family=Libre+Franklin:wght@400;500;600;700&display=swap">
@@ -416,6 +416,11 @@ label.f input,label.f select{font-size:13px}
 <div id="toast" role="status" hidden></div>
 <input type="file" id="importfile" accept="application/json,.json" hidden>
 
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
@@ -594,6 +599,10 @@ async function gdriveDeleteBackup(fileId){
 var LS_KEY='bukukas-v1';
 var S=null;
 var ui={tab:'ringkasan',month:todayStr().slice(0,7),f:{q:'',type:'',wallet:'',cat:''},dfilter:'open',openDebt:{},openAsset:{},calc:{scope:'all',amt:null,days:null,bm:null}};
+/* prompt pemasangan PWA (Android/Chrome/Edge) */
+var installPrompt=null;
+window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();installPrompt=e;if(ui.tab==='pengaturan')render()});
+window.addEventListener('appinstalled',function(){installPrompt=null;toast('Aplikasi berhasil dipasang.');if(ui.tab==='pengaturan')render()});
 function defPrefs(){return {accent:'langit',mode:'auto'}}
 function defaultCats(){return {out:['Makanan & minuman','Transportasi','Belanja','Tagihan & utilitas','Tempat tinggal','Kesehatan','Pendidikan','Hiburan','Donasi','Lainnya'],
   in:['Gaji','Bonus','Usaha','Investasi','Hadiah','Lainnya']}}
@@ -1191,6 +1200,18 @@ function vPengaturan(){
     +'<div class="field-label">Warna aksen</div><div class="swatches" role="group" aria-label="Warna aksen">'
     +Object.keys(ACCENTS).map(function(k){var c=ACCENTS[k].c;return '<button class="sw" data-act="set-accent" data-val="'+k+'" aria-pressed="'+(P.accent===k)+'" aria-label="'+ACCENTS[k].n+'" title="'+ACCENTS[k].n+'"><i style="background:'+(dark?c[2]:c[0])+'"></i>'+ACCENTS[k].n+'</button>'}).join('')+'</div>'
     +'<p class="tiny muted" style="margin:14px 0 0">Pilihan ini tersimpan bersama data Anda. Mode Otomatis mengikuti pengaturan perangkat.</p></section>';
+  /* pasang sebagai aplikasi (PWA) */
+  var isStandalone=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true;
+  var isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  var appCard='<section class="card"><h2>Pasang sebagai aplikasi</h2>'
+    +(isStandalone
+      ? '<div class="note">Aplikasi sudah berjalan dalam mode terpasang (tanpa address bar).</div>'
+      : '<p class="small muted" style="margin:0 0 12px">Tambahkan ke layar utama supaya bisa dibuka seperti aplikasi biasa, lengkap dengan ikon, tanpa address bar.</p>'
+        +'<div class="actions" style="align-items:center">'
+        +(installPrompt?'<button class="btn primary" data-act="install-app">Pasang aplikasi</button>':'')
+        +(isIOS?'<span class="small muted">iPhone/iPad: tombol <b>Bagikan</b> &rarr; <b>Tambahkan ke Layar Utama</b>.</span>':(installPrompt?'':'<span class="small muted">Lewat menu browser: <b>Instal aplikasi</b> / <b>Tambahkan ke layar utama</b>.</span>'))
+        +'</div>')
+    +'</section>';
   var w='<section class="card"><div class="sechead"><h2>Dompet & rekening</h2><button class="btn sm primary" data-act="add-wallet">+ Tambah dompet</button></div><div class="list" style="margin-top:8px">'
    +S.wallets.map(function(x){return '<div class="item"><div class="l"><span class="t">'+esc(x.name)+'</span><span class="small muted">'+esc(x.type)+' · saldo awal '+idr(x.opening)+'</span></div><div class="r"><span class="num">'+idr(walletBal(x))+'</span><span><button class="linkbtn" data-act="edit-wallet" data-id="'+x.id+'">Ubah</button><button class="linkbtn d" data-act="del-wallet" data-id="'+x.id+'">Hapus</button></span></div></div>'}).join('')+'</div></section>';
   function chips(type){return '<div class="chips">'+S.cats[type].map(function(c){return '<span class="chip">'+esc(c)+'<button data-act="del-cat" data-val="'+type+'" data-id="'+esc(c)+'" aria-label="Hapus kategori '+esc(c)+'">&times;</button></span>'}).join('')+'</div>'}
@@ -1233,7 +1254,7 @@ function vPengaturan(){
   }
   sbSec+='</section>';
   var danger='<section class="card"><h2>Hapus data</h2><p class="small muted" style="margin:0 0 12px">Menghapus semua dompet, transaksi, utang, dan aset. Buat cadangan lebih dulu bila perlu.</p><button class="btn danger" data-act="reset-all">Hapus semua data</button></section>';
-  return tampil+w+c+drv+sbSec+danger;
+  return tampil+appCard+w+c+drv+sbSec+danger;
 }
 
 /* ---------- modal ---------- */
@@ -1522,6 +1543,7 @@ function onAct(el){
   else if(a==='bm-prev'||a==='bm-next'){ui.bm+=(a==='bm-prev'?-1:1);render()}
   else if(a==='calc-reset'){ui.calc={scope:'all',amt:null,days:null,bm:ui.bm};render()}
   else if(a==='rbm-now'){ui.bm=curBudKey();render()}
+  else if(a==='install-app'){var ip=installPrompt;if(!ip){toast('Gunakan menu browser untuk memasang aplikasi.');return}ip.prompt();ip.userChoice.then(function(r){installPrompt=null;if(r&&r.outcome==='accepted')toast('Aplikasi dipasang.');render()}).catch(function(){render()})}
   else if(a==='close')closeModal();
   else if(a==='set-mode'){S.prefs.mode=val;applyTheme();save();render()}
   else if(a==='set-accent'){S.prefs.accent=val;applyTheme();save();render()}

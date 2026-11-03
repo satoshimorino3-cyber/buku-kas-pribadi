@@ -40,3 +40,19 @@ lewat Supabase.
   **Pengaturan → Cadangan & pemulihan → Unduh cadangan (JSON)** untuk pindah perangkat.
 - Project Supabase gratis akan di-pause setelah lama tidak dipakai; buka dashboard
   untuk mengaktifkan kembali.
+
+## Pasang sebagai aplikasi (PWA)
+
+Aplikasi ini bisa dipasang ke layar utama HP/desktop dan terbuka tanpa address bar.
+
+- **Android (Chrome/Edge):** buka situs, lalu menu browser > **Instal aplikasi**
+  (atau **Tambahkan ke layar utama**). Bisa juga lewat **Pengaturan > Pasang
+  sebagai aplikasi > Pasang aplikasi**.
+- **iPhone/iPad (Safari):** buka situs, ketuk tombol **Bagikan**, lalu
+  **Tambahkan ke Layar Utama**.
+- **Desktop (Chrome/Edge):** ikon **instal** di kanan address bar.
+
+Berkas pendukung: manifest.webmanifest, sw.js, icon-192.png, icon-512.png,
+icon-192-maskable.png, icon-512-maskable.png, pple-touch-icon.png.
+Service worker membuat aplikasi tetap bisa dibuka saat offline (data tetap
+tersimpan lokal di perangkat).
