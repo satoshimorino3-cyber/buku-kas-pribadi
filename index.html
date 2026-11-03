@@ -725,11 +725,12 @@ async function initDb(){
 
 /* ---------- Sinkronisasi cloud (Supabase) ---------- */
 var SB_CFG_KEY='bukukas-sb-config-v1', SB_TABLE='bukukas_state';
+var SB_DEFAULT={url:'https://doecyauyvplioynyslst.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvZWN5YXV5dnBsaW95bnlzbHN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM2NTQ2NzAsImV4cCI6MjEwOTIzMDY3MH0.L9gBJNgccrmqQhLaBQN-p3U3031CuFNwJFXMRnLP0cI'};
 var sbClient=null, sbUser=null, sbTimer=null, sbBusy=false, sbChannel=null, sbApplying=false;
 
-function getSbConfig(){try{var c=localStorage.getItem(SB_CFG_KEY);return c?JSON.parse(c):null}catch(e){return null}}
+function getSbConfig(){try{var c=localStorage.getItem(SB_CFG_KEY);if(c)return JSON.parse(c)}catch(e){}return SB_DEFAULT&&SB_DEFAULT.url?SB_DEFAULT:null}
 function saveSbConfig(c){try{localStorage.setItem(SB_CFG_KEY,JSON.stringify(c))}catch(e){}}
-function clearSbConfig(){try{localStorage.removeItem(SB_CFG_KEY)}catch(e){}}
+function clearSbConfig(){try{localStorage.setItem(SB_CFG_KEY,JSON.stringify({url:'',key:''}))}catch(e){}}
 function sbConfigured(){var c=getSbConfig();return !!(c&&c.url&&c.key)}
 function sbSdkReady(){return typeof window.supabase!=='undefined'&&window.supabase&&typeof window.supabase.createClient==='function'}
 function sbReady(){return !!sbClient&&!!sbUser}
