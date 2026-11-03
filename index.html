@@ -593,7 +593,7 @@ async function gdriveDeleteBackup(fileId){
 /* ---------- state ---------- */
 var LS_KEY='bukukas-v1';
 var S=null;
-var ui={tab:'ringkasan',month:todayStr().slice(0,7),f:{q:'',type:'',wallet:'',cat:''},dfilter:'open',openDebt:{},openAsset:{},calc:{scope:'all',amt:null,days:null,bm:null},rbm:0};
+var ui={tab:'ringkasan',month:todayStr().slice(0,7),f:{q:'',type:'',wallet:'',cat:''},dfilter:'open',openDebt:{},openAsset:{},calc:{scope:'all',amt:null,days:null,bm:null}};
 function defPrefs(){return {accent:'langit',mode:'auto'}}
 function defaultCats(){return {out:['Makanan & minuman','Transportasi','Belanja','Tagihan & utilitas','Tempat tinggal','Kesehatan','Pendidikan','Hiburan','Donasi','Lainnya'],
   in:['Gaji','Bonus','Usaha','Investasi','Hadiah','Lainnya']}}
@@ -716,7 +716,7 @@ async function initDb(){
     store.col=col;
     if(docs.meta){
       var remote=stateFromDocs(docs);
-      if(remote.updatedAt>=S.updatedAt){S=remote;writeLocal();applyTheme();ui.bm=ui.rbm=curBudKey();render()}
+      if(remote.updatedAt>=S.updatedAt){S=remote;writeLocal();applyTheme();ui.bm=curBudKey();render()}
       else pushSync();
     }else if(S.updatedAt>0)pushSync();
     setSync('ok','Tersimpan di akun Anda');
@@ -767,7 +767,7 @@ async function sbApplyRemote(remote){
     S=normalize(r);
     writeLocal();
     applyTheme();
-    ui.bm=ui.rbm=curBudKey();
+    ui.bm=curBudKey();
     render();
     toast('Data diperbarui dari cloud.');
     return true;
@@ -892,6 +892,7 @@ function wname(id){var w=S.wallets.filter(function(x){return x.id===id})[0];retu
 function debtLeft(d){return d.amount-d.pays.reduce(function(a,p){return a+p.amount},0)}
 function debtStatus(d){if(debtLeft(d)<=0)return 'lunas';if(d.due&&d.due<todayStr())return 'terlambat';return 'aktif'}
 function monthTotals(k){var i=0,o=0;S.tx.forEach(function(t){if(t.date.slice(0,7)!==k||t.debtId)return;if(t.type==='in')i+=t.amount;else if(t.type==='out')o+=t.amount});return {i:i,o:o}}
+function rangeTotals(r){var i=0,o=0;S.tx.forEach(function(t){if(t.debtId||t.date<r.s||t.date>r.e)return;if(t.type==='in')i+=t.amount;else if(t.type==='out')o+=t.amount});return {i:i,o:o}}
 function spentByCat(k){var m={};S.tx.forEach(function(t){if(t.date.slice(0,7)!==k||t.debtId||t.type!=='out')return;m[t.cat||'Lainnya']=(m[t.cat||'Lainnya']||0)+t.amount});return m}
 /* periode anggaran: dimulai tanggal N bulan K, berakhir tanggal N-1 bulan berikutnya (N=1: satu bulan kalender) */
 function bStart(){return Math.min(28,Math.max(1,S.budgetStart||1))}
@@ -936,8 +937,9 @@ function monthNav(){return '<div class="mnav"><button data-act="month-prev" aria
 function budNav(){return '<div class="mnav"><button data-act="bm-prev" aria-label="Periode sebelumnya">&#8249;</button><strong style="min-width:176px">'+budLabel(ui.bm)+'</strong><button data-act="bm-next" aria-label="Periode berikutnya">&#8250;</button></div>'}
 function pageHead(){
   var t=ui.tab,acts='';
-  if(t==='ringkasan'||t==='transaksi'||t==='laporan')acts+=monthNav();
-  if(t==='anggaran')acts+=budNav()+'<button class="btn primary" data-act="edit-budget">Atur anggaran</button>';
+  if(t==='ringkasan'||t==='anggaran')acts+=budNav();
+  if(t==='transaksi'||t==='laporan')acts+=monthNav();
+  if(t==='anggaran')acts+='<button class="btn primary" data-act="edit-budget">Atur anggaran</button>';
   
   if(t==='utang')acts+='<button class="btn primary" data-act="add-debt">+ Tambah catatan</button>';
   if(t==='aset')acts+='<button class="btn primary" data-act="add-asset">+ Tambah aset</button>';
@@ -984,23 +986,22 @@ function txRow(t,opts){
 }
 
 /* ---------- Ringkasan ---------- */
-/* periode anggaran di Ringkasan bisa disamakan dengan periode yang dipilih di menu Anggaran */
-function budSyncBar(){
-  var same=ui.rbm===ui.bm,cur=ui.rbm===curBudKey();
-  return '<div class="actions" style="margin:8px 0 0;justify-content:space-between"><span class="small" style="font-weight:500">'+budLabel(ui.rbm)+'</span>'+(cur?'<span class="pill acc">Periode berjalan</span>':'<span class="pill warn">Bukan periode berjalan</span>')+'</div>'
-   +'<div class="note" style="margin-top:10px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span>'+(same?'Sama dengan periode di menu Anggaran.':'Menu Anggaran menampilkan '+budLabel(ui.bm)+'.')+'</span>'
-   +'<span class="actions">'+(cur?'':'<button class="btn sm" data-act="rbm-now">Periode berjalan</button>')+'<button class="btn sm primary" data-act="sync-budget"'+(same?' disabled':'')+'>'+(same?'Sudah sinkron':'Sinkron')+'</button></span></div>';
+/* catatan periode Ringkasan: selalu mengikuti periode anggaran yang sedang dipilih */
+function budPeriodNote(){
+  var r=budRange(ui.bm),cur=ui.bm===curBudKey();
+  return '<div class="actions" style="margin:8px 0 0;justify-content:space-between"><span class="small" style="font-weight:500">'+budLabel(ui.bm)+'</span>'+(cur?'<span class="pill acc">Periode berjalan</span>':'<button class="btn sm" data-act="rbm-now">Periode berjalan</button>')+'</div>'
+   +'<div class="tiny muted" style="margin-top:4px">'+fmtDate(r.s)+' &ndash; '+fmtDate(r.e)+'</div>';
 }
 function vRingkasan(){
-  var T=totals(),M=monthTotals(ui.month);
+  var T=totals(),br=budRange(ui.bm),R=rangeTotals(br);
   var nw='<section class="card nw s8">'+illus('coins')+'<div class="up">Kekayaan bersih</div><div class="nwv">'+idr(T.net)+'</div>'+sky(T)+'</section>';
-  var usedPct=M.i>0?Math.min(100,M.o/M.i*100):(M.o>0?100:0),dcls=usedPct>=100?'over':(usedPct>=80?'near':''),C=2*Math.PI*46;
+  var usedPct=R.i>0?Math.min(100,R.o/R.i*100):(R.o>0?100:0),dcls=usedPct>=100?'over':(usedPct>=80?'near':''),C=2*Math.PI*46;
   var cash='<section class="card s4">'+hd('transaksi','Arus kas')
     +'<div class="donutwrap"><svg class="donut '+dcls+'" viewBox="0 0 112 112" aria-hidden="true"><circle class="tr" cx="56" cy="56" r="46"/><circle class="ar" cx="56" cy="56" r="46" stroke-dasharray="'+(usedPct/100*C).toFixed(1)+' '+C.toFixed(1)+'"/></svg>'
-    +'<div><div class="dpct">'+Math.round(usedPct)+'<small>%</small></div><div class="small muted">pengeluaran dari pemasukan, '+monthLabel(ui.month)+'</div></div></div>'
-    +'<div class="krow"><span class="up">Pemasukan</span><span class="v in">'+idr(M.i)+'</span></div>'
-    +'<div class="krow"><span class="up">Pengeluaran</span><span class="v out">'+idr(M.o)+'</span></div>'
-    +'<div class="krow"><span class="up">Selisih</span><span class="v '+(M.i-M.o>=0?'in':'out')+'">'+idr(M.i-M.o)+'</span></div>'
+    +'<div><div class="dpct">'+Math.round(usedPct)+'<small>%</small></div><div class="small muted">pengeluaran dari pemasukan, '+budLabel(ui.bm)+'</div></div></div>'
+    +'<div class="krow"><span class="up">Pemasukan</span><span class="v in">'+idr(R.i)+'</span></div>'
+    +'<div class="krow"><span class="up">Pengeluaran</span><span class="v out">'+idr(R.o)+'</span></div>'
+    +'<div class="krow"><span class="up">Selisih</span><span class="v '+(R.i-R.o>=0?'in':'out')+'">'+idr(R.i-R.o)+'</span></div>'
     +'<p class="tiny muted" style="margin:10px 0 0">Uang pinjaman dan cicilan tidak dihitung di sini, hanya mengubah saldo dompet.</p></section>';
   var wal='<section class="card link s4" data-act="tab" data-val="pengaturan">'+hd('wallet','Dompet','<button class="linkbtn" data-act="tab" data-val="pengaturan">Kelola</button>')+'<div class="list">'
     +S.wallets.map(function(w){var b=walletBal(w);return '<div class="item"><div class="l"><span class="t">'+esc(w.name)+'</span><span class="small muted">'+esc(w.type)+'</span></div><div class="r"><span class="num '+(b<0?'out':'')+'">'+idr(b)+'</span></div></div>'}).join('')+'</div><div class="deco">'+illus('wallet')+'</div></section>';
@@ -1008,9 +1009,9 @@ function vRingkasan(){
   var dueH='<section class="card link s4" data-act="tab" data-val="utang">'+hd('clock','Utang & piutang','<button class="linkbtn" data-act="tab" data-val="utang">Lihat semua</button>')
     +(due.length?'<div class="list">'+due.map(function(d){var st=debtStatus(d);var w=d.due?(st==='terlambat'?'terlambat '+daysBetween(d.due,todayStr())+' hari':(daysBetween(todayStr(),d.due)===0?'jatuh tempo hari ini':'jatuh tempo '+daysBetween(todayStr(),d.due)+' hari lagi')):'tanpa jatuh tempo';
       return '<div class="item"><div class="l"><span class="t">'+esc(d.person)+'</span><span class="small '+(st==='terlambat'?'out':'muted')+'">'+(d.dir==='utang'?'Saya berutang':'Berutang ke saya')+' · '+w+'</span></div><div class="r"><span class="num '+(d.dir==='utang'?'out':'in')+'">'+idr(debtLeft(d))+'</span></div></div>'}).join('')+'</div>':empty('Tidak ada utang atau piutang yang berjalan.','wallet'))+'<div class="deco">'+illus('coins')+'</div></section>';
-  var sp=spentInRange(budRange(ui.rbm)),bl=S.cats.out.filter(function(c){return S.budgets[c]>0}).map(function(c){return {c:c,lim:S.budgets[c],sp:sp[c]||0}}).sort(function(a,b){return b.sp/b.lim-a.sp/a.lim}).slice(0,4);
+  var sp=spentInRange(br),bl=S.cats.out.filter(function(c){return S.budgets[c]>0}).map(function(c){return {c:c,lim:S.budgets[c],sp:sp[c]||0}}).sort(function(a,b){return b.sp/b.lim-a.sp/a.lim}).slice(0,4);
   var bud='<section class="card s4">'+hd('anggaran','Anggaran periode','<button class="linkbtn" data-act="tab" data-val="anggaran">Atur</button>')
-    +budSyncBar()+(bl.length?bl.map(function(b){return budRow(b.c,b.lim,b.sp)}).join(''):empty('Belum ada anggaran. Atur batas per kategori di menu Anggaran.','pie'))+'</section>';
+    +budPeriodNote()+(bl.length?bl.map(function(b){return budRow(b.c,b.lim,b.sp)}).join(''):empty('Belum ada anggaran. Atur batas per kategori di menu Anggaran.','pie'))+'</section>';
   var rec=S.tx.map(function(t,i){return {t:t,i:i}}).sort(function(a,b){return a.t.date<b.t.date?1:(a.t.date>b.t.date?-1:b.i-a.i)}).slice(0,6).map(function(x){return x.t});
   var recH='<section class="card link s8" data-act="tab" data-val="transaksi">'+hd('list','Transaksi terbaru','<button class="linkbtn" data-act="tab" data-val="transaksi">Semua</button>')
     +(rec.length?'<div class="list">'+rec.map(function(t){return txRow(t,{noact:true,date:true})}).join('')+'</div>':empty('Belum ada transaksi. Tekan salah satu tombol cepat.','coins'))+'</section>';
@@ -1349,7 +1350,7 @@ function assetValueForm(a){
 }
 function budgetForm(){
   openModal({title:'Atur anggaran',body:'<div class="field-label" style="margin:0">Periode anggaran</div><div class="two"><label class="f">Dari tanggal<input type="date" name="bfrom" value="'+budRange(ui.bm).s+'"></label><label class="f">Sampai tanggal<input type="date" name="bto" value="'+budRange(ui.bm).e+'"></label></div><p class="tiny muted" id="perprev" style="margin:-6px 0 0"></p><p class="small muted" style="margin:0">Batas pengeluaran per periode. Kosongkan kolom untuk kategori yang tidak dibatasi.</p>'+S.cats.out.map(function(c,i){return '<label class="f">'+esc(c)+' (Rp per periode)<input class="money num" name="b'+i+'" inputmode="numeric" value="'+moneyStr(S.budgets[c]||0)+'" placeholder="Tanpa batas"></label>'}).join(''),
-   onOpen:function(f){function pv(){var a=f.elements.bfrom.value,b=f.elements.bto.value,el=$('#perprev',f);if(!a||!b){el.textContent='Isi kedua tanggal.';return}if(b<a){el.textContent='Tanggal akhir tidak boleh sebelum tanggal mulai.';return}el.textContent='Periode '+rangeLabel({s:a,e:b})+' ('+(daysBetween(a,b)+1)+' hari). Periode sebelum dan sesudahnya digeser per bulan dengan tanggal yang sama.'}f.elements.bfrom.addEventListener('change',pv);f.elements.bto.addEventListener('change',pv);pv()},onSubmit:function(fd){var bf=String(fd.get('bfrom')||''),bt=String(fd.get('bto')||'');if(!bf||!bt)return 'Isi tanggal mulai dan tanggal akhir periode.';if(bt<bf)return 'Tanggal akhir tidak boleh sebelum tanggal mulai.';if(daysBetween(bf,bt)>365)return 'Periode terlalu panjang. Maksimal satu tahun.';var nb={};S.cats.out.forEach(function(c,i){var v=parseMoney(fd.get('b'+i));if(v>0)nb[c]=v});S.budgets=nb;S.budgetFrom=bf;S.budgetTo=bt;ui.bm=0;ui.rbm=curBudKey();afterChange(ui.rbm===0?'Anggaran disimpan.':'Anggaran disimpan. Ringkasan masih menampilkan periode berjalan. Tekan Sinkron di Ringkasan untuk menyamakan.')}});
+   onOpen:function(f){function pv(){var a=f.elements.bfrom.value,b=f.elements.bto.value,el=$('#perprev',f);if(!a||!b){el.textContent='Isi kedua tanggal.';return}if(b<a){el.textContent='Tanggal akhir tidak boleh sebelum tanggal mulai.';return}el.textContent='Periode '+rangeLabel({s:a,e:b})+' ('+(daysBetween(a,b)+1)+' hari). Periode sebelum dan sesudahnya digeser per bulan dengan tanggal yang sama.'}f.elements.bfrom.addEventListener('change',pv);f.elements.bto.addEventListener('change',pv);pv()},onSubmit:function(fd){var bf=String(fd.get('bfrom')||''),bt=String(fd.get('bto')||'');if(!bf||!bt)return 'Isi tanggal mulai dan tanggal akhir periode.';if(bt<bf)return 'Tanggal akhir tidak boleh sebelum tanggal mulai.';if(daysBetween(bf,bt)>365)return 'Periode terlalu panjang. Maksimal satu tahun.';var nb={};S.cats.out.forEach(function(c,i){var v=parseMoney(fd.get('b'+i));if(v>0)nb[c]=v});S.budgets=nb;S.budgetFrom=bf;S.budgetTo=bt;ui.bm=curBudKey();afterChange('Anggaran disimpan.')}});
 }
 function menuSheet(){
   openModal({title:'Menu',hideSubmit:true,cancel:'Tutup',body:'<div class="menu">'+['anggaran','laporan','pengaturan'].map(function(k){return '<button type="button" data-act="tab" data-val="'+k+'">'+icon(k)+TITLES[k]+'</button>'}).join('')+'</div>'});
@@ -1512,7 +1513,7 @@ async function drivePick(id){
 
 /* ---------- aksi ---------- */
 function byId(list,id){return list.filter(function(x){return x.id===id})[0]}
-function freshState(){var keep=S.prefs,last=S.driveLast;S=emptyState();S.prefs=keep;S.driveLast=last;ui.bm=ui.rbm=curBudKey()}
+function freshState(){var keep=S.prefs,last=S.driveLast;S=emptyState();S.prefs=keep;S.driveLast=last;ui.bm=curBudKey()}
 function onAct(el){
   var a=el.getAttribute('data-act'),id=el.getAttribute('data-id'),id2=el.getAttribute('data-id2'),val=el.getAttribute('data-val');
   if(a==='tab'){closeModal();ui.tab=val;try{history.replaceState(null,'','#'+val)}catch(e){}render();window.scrollTo(0,0)}
@@ -1520,8 +1521,7 @@ function onAct(el){
   else if(a==='month-prev'||a==='month-next'){ui.month=addMonths(ui.month,a==='month-prev'?-1:1);render()}
   else if(a==='bm-prev'||a==='bm-next'){ui.bm+=(a==='bm-prev'?-1:1);render()}
   else if(a==='calc-reset'){ui.calc={scope:'all',amt:null,days:null,bm:ui.bm};render()}
-  else if(a==='sync-budget'){ui.rbm=ui.bm;render();toast('Periode di Ringkasan disamakan dengan menu Anggaran.')}
-  else if(a==='rbm-now'){ui.rbm=curBudKey();render()}
+  else if(a==='rbm-now'){ui.bm=curBudKey();render()}
   else if(a==='close')closeModal();
   else if(a==='set-mode'){S.prefs.mode=val;applyTheme();save();render()}
   else if(a==='set-accent'){S.prefs.accent=val;applyTheme();save();render()}
@@ -1634,7 +1634,7 @@ document.addEventListener('change',function(e){
 (function boot(){
   var h='';try{h=(location.hash||'').slice(1)}catch(e){}
   if(NAV.some(function(t){return t[0]===h}))ui.tab=h;
-  S=readLocal()||demoState();ui.bm=ui.rbm=curBudKey();
+  S=readLocal()||demoState();ui.bm=curBudKey();
   applyTheme();watchTheme();
   render();
   setSync('local','Menyambungkan…');
