@@ -416,6 +416,7 @@ label.f input,label.f select{font-size:13px}
 <div id="toast" role="status" hidden></div>
 <input type="file" id="importfile" accept="application/json,.json" hidden>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
 'use strict';
@@ -685,7 +686,8 @@ function stateFromDocs(docs){
 function save(){
   S.updatedAt=Date.now();writeLocal();
   if(store.col){setSync('busy','Menyimpan…');clearTimeout(store.timer);store.timer=setTimeout(pushSync,900)}
-  else setSync('local','Tersimpan di perangkat ini');
+  else if(!sbReady())setSync('local','Tersimpan di perangkat ini');
+  sbSchedulePush();
 }
 async function pushSync(){
   if(!store.col)return;
@@ -719,6 +721,164 @@ async function initDb(){
     }else if(S.updatedAt>0)pushSync();
     setSync('ok','Tersimpan di akun Anda');
   }catch(e){setSync('local','Tersimpan di perangkat ini')}
+}
+
+/* ---------- Sinkronisasi cloud (Supabase) ---------- */
+var SB_CFG_KEY='bukukas-sb-config-v1', SB_TABLE='bukukas_state';
+var sbClient=null, sbUser=null, sbTimer=null, sbBusy=false, sbChannel=null, sbApplying=false;
+
+function getSbConfig(){try{var c=localStorage.getItem(SB_CFG_KEY);return c?JSON.parse(c):null}catch(e){return null}}
+function saveSbConfig(c){try{localStorage.setItem(SB_CFG_KEY,JSON.stringify(c))}catch(e){}}
+function clearSbConfig(){try{localStorage.removeItem(SB_CFG_KEY)}catch(e){}}
+function sbConfigured(){var c=getSbConfig();return !!(c&&c.url&&c.key)}
+function sbSdkReady(){return typeof window.supabase!=='undefined'&&window.supabase&&typeof window.supabase.createClient==='function'}
+function sbReady(){return !!sbClient&&!!sbUser}
+function sbSetStatus(state,text){setSync(state,text)}
+function sbErrorMsg(e){
+  var c=e&&(e.code||e.status),m=e&&(e.message||e.error_description||e.hint);
+  if(c==='no_config')return 'Supabase belum dikonfigurasi. Isi Project URL dan anon key.';
+  if(c==='no_sdk')return 'Pustaka Supabase gagal dimuat. Periksa koneksi lalu muat ulang halaman.';
+  if(c==='42P01'||c==='relation'||(m&&m.indexOf('bukukas_state')>=0))return 'Tabel bukukas_state belum ada. Jalankan SQL skema di Supabase SQL Editor.';
+  if(c==='Invalid login credentials')return 'Email atau kata sandi salah.';
+  if(c==='Email not confirmed')return 'Email belum dikonfirmasi. Cek kotak masuk, atau matikan "Confirm email" di Supabase Authentication.';
+  if(c==='User already registered'||c==='user_already_exists')return 'Email sudah terdaftar. Gunakan tombol Masuk.';
+  if(c==='weak_password')return 'Kata sandi minimal 6 karakter.';
+  if(c==='over_email_send_rate_limit')return 'Terlalu banyak percobaan email. Tunggu beberapa menit.';
+  return m||String(e||'Terjadi kesalahan.');
+}
+function sbEnsureClient(){
+  var cfg=getSbConfig();
+  if(!cfg||!cfg.url||!cfg.key)throw {code:'no_config'};
+  if(!sbSdkReady())throw {code:'no_sdk'};
+  if(!sbClient||sbClient.__sbUrl!==cfg.url||sbClient.__sbKey!==cfg.key){
+    sbClient=window.supabase.createClient(cfg.url,cfg.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
+    try{sbClient.__sbUrl=cfg.url;sbClient.__sbKey=cfg.key}catch(e){}
+  }
+  return sbClient;
+}
+async function sbApplyRemote(remote){
+  if(!remote||!remote.data)return false;
+  var r=remote.data;
+  if(typeof r!=='object'||!Array.isArray(r.tx)||!Array.isArray(r.wallets))return false;
+  if((r.updatedAt||0)<=(S.updatedAt||0))return false;
+  sbApplying=true;
+  try{
+    S=normalize(r);
+    writeLocal();
+    applyTheme();
+    ui.bm=ui.rbm=curBudKey();
+    render();
+    toast('Data diperbarui dari cloud.');
+    return true;
+  }finally{sbApplying=false}
+}
+async function sbPushNow(){
+  if(!sbReady()||sbApplying)return false;
+  if(sbBusy)return false;
+  sbBusy=true;sbSetStatus('busy','Menyinkronkan\u2026');
+  try{
+    var data=JSON.parse(JSON.stringify(S));
+    var res=await sbClient.from(SB_TABLE).upsert({user_id:sbUser.id,data:data,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+    if(res.error)throw res.error;
+    sbSetStatus('ok','Tersimpan di cloud');
+    return true;
+  }catch(e){
+    sbSetStatus('local','Tersimpan di perangkat (sinkron gagal)');
+    console.warn('Supabase push:',e);
+    return false;
+  }finally{sbBusy=false}
+}
+function sbSchedulePush(){
+  if(!sbReady())return;
+  clearTimeout(sbTimer);
+  sbTimer=setTimeout(function(){sbPushNow()},1200);
+}
+async function sbPull(){
+  if(!sbReady())return false;
+  var res=await sbClient.from(SB_TABLE).select('data,updated_at').eq('user_id',sbUser.id).maybeSingle();
+  if(res.error)throw res.error;
+  if(!res.data)return false;
+  return await sbApplyRemote(res.data);
+}
+function sbUnsubscribe(){
+  if(sbChannel&&sbClient){try{sbClient.removeChannel(sbChannel)}catch(e){}}
+  sbChannel=null;
+}
+function sbSubscribe(){
+  sbUnsubscribe();
+  if(!sbClient||!sbUser)return;
+  sbChannel=sbClient.channel('bukukas-'+sbUser.id)
+    .on('postgres_changes',{event:'*',schema:'public',table:SB_TABLE,filter:'user_id=eq.'+sbUser.id},function(p){
+      if(p&&p.new&&p.new.data)sbApplyRemote(p.new);
+    })
+    .subscribe();
+}
+function sbWatchAuth(){
+  if(!sbClient||sbClient.__sbWatching)return;
+  sbClient.__sbWatching=true;
+  sbClient.auth.onAuthStateChange(function(ev,session){
+    sbUser=session?session.user:null;
+    if(sbUser)sbSubscribe();
+    else{sbUnsubscribe();sbSetStatus('local','Tersimpan di perangkat ini')}
+  });
+}
+async function sbAfterAuth(){
+  try{
+    var applied=await sbPull();
+    sbSubscribe();
+    if(!applied)await sbPushNow();
+  }catch(e){
+    sbSetStatus('local','Sinkron gagal');
+    console.warn('Supabase:',e);
+  }
+  if(ui.tab==='pengaturan')render();
+}
+async function sbLogin(email,pass){
+  var cl=sbEnsureClient();
+  var res=await cl.auth.signInWithPassword({email:email,password:pass});
+  if(res.error)throw res.error;
+  sbUser=res.data.user;
+  await sbAfterAuth();
+}
+async function sbSignUp(email,pass){
+  var cl=sbEnsureClient();
+  var res=await cl.auth.signUp({email:email,password:pass});
+  if(res.error)throw res.error;
+  if(res.data&&res.data.session){
+    sbUser=res.data.user;
+    await sbAfterAuth();
+    return 'Pendaftaran berhasil. Data disinkronkan.';
+  }
+  throw new Error('Pendaftaran berhasil. Cek email untuk konfirmasi, lalu tekan Masuk. (Bisa juga matikan "Confirm email" di Supabase Authentication.)');
+}
+async function sbLogout(){
+  try{if(sbClient)await sbClient.auth.signOut()}catch(e){}
+  sbUser=null;sbUnsubscribe();sbSetStatus('local','Tersimpan di perangkat ini');render();
+}
+async function sbManualSync(){
+  if(!sbReady()){toast('Masuk dulu untuk menyinkronkan.');return}
+  try{
+    sbSetStatus('busy','Menyinkronkan\u2026');
+    var applied=await sbPull();
+    if(applied)toast('Data diperbarui dari cloud.');
+    else{await sbPushNow();toast('Data terkirim ke cloud.')}
+  }catch(e){toast(sbErrorMsg(e))}
+}
+async function sbStart(){
+  if(!sbConfigured())return;
+  try{
+    var cl=sbEnsureClient();
+    var res=await cl.auth.getSession();
+    var session=res&&res.data?res.data.session:null;
+    sbUser=session?session.user:null;
+    sbWatchAuth();
+    if(sbUser)await sbAfterAuth();
+    else sbSetStatus('local','Tersimpan di perangkat ini');
+  }catch(e){
+    sbSetStatus('local','Sinkron cloud tidak aktif');
+    console.warn('Supabase:',e);
+  }
+  if(ui.tab==='pengaturan')render();
 }
 
 /* ---------- perhitungan ---------- */
@@ -1051,8 +1211,26 @@ function vPengaturan(){
     +'<div class="actions"><button class="btn primary" data-act="drive-backup">Cadangkan ke Google Drive</button><button class="btn" data-act="drive-restore">Pulihkan dari Google Drive</button></div>'
     +'<div class="field-label" style="margin-top:20px">Berkas di perangkat</div>'
     +'<div class="actions"><button class="btn" data-act="export-json">Unduh cadangan (JSON)</button><button class="btn" data-act="import-json">Pulihkan dari berkas</button></div></section>';
+  /* Supabase */
+  var sbcfg=getSbConfig();
+  var sbSec='<section class="card"><h2>Sinkronisasi cloud (Supabase)</h2>';
+  if(!sbcfg||!sbcfg.url||!sbcfg.key){
+    sbSec+='<div class="note" style="margin-bottom:12px">Opsional. Supaya catatan otomatis sama di semua perangkat, buat project gratis di <b>supabase.com</b>, jalankan SQL skema (lihat berkas <b>supabase/schema.sql</b> di repo), lalu tempel Project URL dan anon key di sini.</div>'
+      +'<div class="form"><label class="f">Project URL<input name="sb_url" placeholder="https://xxxx.supabase.co" maxlength="200" autocomplete="off"></label>'
+      +'<label class="f">Anon public key<input name="sb_key" placeholder="eyJhbGciOi..." maxlength="500" autocomplete="off"></label></div>'
+      +'<div class="actions" style="margin-top:10px"><button class="btn primary" data-act="sb-save-config">Simpan konfigurasi</button></div>';
+  }else if(!sbUser){
+    sbSec+='<div class="note" style="margin-bottom:12px">Terhubung ke project <b>'+esc(String(sbcfg.url).replace(/^https?:\/\//,''))+'</b>. Masuk atau daftar dengan email agar data tersimpan di cloud.</div>'
+      +'<div class="form"><label class="f">Email<input name="sb_email" type="email" autocomplete="username" placeholder="nama@email.com" maxlength="200"></label>'
+      +'<label class="f">Kata sandi<input name="sb_pass" type="password" autocomplete="current-password" placeholder="minimal 6 karakter" maxlength="200"></label></div>'
+      +'<div class="actions" style="margin-top:10px"><button class="btn primary" data-act="sb-login">Masuk</button><button class="btn" data-act="sb-signup">Daftar</button><button class="btn" data-act="sb-disconnect">Ganti project</button></div>';
+  }else{
+    sbSec+='<div class="note" style="margin-bottom:12px">Masuk sebagai <b>'+esc(sbUser.email||'')+'</b>. Perubahan otomatis dikirim ke cloud dan diterima perangkat lain.</div>'
+      +'<div class="actions"><button class="btn primary" data-act="sb-sync-now">Sinkron sekarang</button><button class="btn" data-act="sb-logout">Keluar</button></div>';
+  }
+  sbSec+='</section>';
   var danger='<section class="card"><h2>Hapus data</h2><p class="small muted" style="margin:0 0 12px">Menghapus semua dompet, transaksi, utang, dan aset. Buat cadangan lebih dulu bila perlu.</p><button class="btn danger" data-act="reset-all">Hapus semua data</button></section>';
-  return tampil+w+c+drv+danger;
+  return tampil+w+c+drv+sbSec+danger;
 }
 
 /* ---------- modal ---------- */
@@ -1177,9 +1355,19 @@ function menuSheet(){
 
 /* ---------- ekspor / impor berkas ---------- */
 async function saveFile(name,data){
-  try{var dl=await window.claude.use('downloads');if(!dl){toast('Unduhan tidak tersedia di tampilan ini.');return}
-    await dl.save({filename:name,data:data});toast('Berkas disimpan.')}
-  catch(e){if(e&&e.code==='declined')return;toast('Berkas tidak dapat disimpan dari tampilan ini.')}
+  if(window.claude&&window.claude.use){
+    try{var dl=await window.claude.use('downloads');
+      if(dl){await dl.save({filename:name,data:data});toast('Berkas disimpan.');return}}
+    catch(e){if(e&&e.code==='declined')return}
+  }
+  try{
+    var isCsv=/\.csv$/i.test(name);
+    var blob=new Blob([data],{type:isCsv?'text/csv;charset=utf-8':'application/json;charset=utf-8'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();
+    setTimeout(function(){a.remove();URL.revokeObjectURL(url)},500);
+    toast('Berkas diunduh.');
+  }catch(e){toast('Berkas tidak dapat diunduh.')}
 }
 function csvCell(v){v=String(v==null?'':v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
 function exportCsv(){
@@ -1377,6 +1565,28 @@ function onAct(el){
   else if(a==='gdrive-disconnect'){
     confirmBox('Putuskan koneksi Google Drive?',function(){clearGDriveConfig();toast('Google Drive diputuskan.');render()});
   }
+  else if(a==='sb-save-config'){
+    var uEl=document.querySelector('input[name="sb_url"]'),kEl=document.querySelector('input[name="sb_key"]');
+    var sbUrl=uEl?uEl.value.trim():'',sbKey=kEl?kEl.value.trim():'';
+    if(!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(sbUrl)){toast('Project URL harus seperti https://xxxx.supabase.co');return}
+    if(sbKey.length<40){toast('Anon key tidak valid.');return}
+    saveSbConfig({url:sbUrl.replace(/\/+$/,''),key:sbKey});
+    sbClient=null;sbUser=null;sbUnsubscribe();
+    toast('Konfigurasi Supabase disimpan.');render();sbStart();
+  }
+  else if(a==='sb-login'||a==='sb-signup'){
+    var eEl=document.querySelector('input[name="sb_email"]'),pEl=document.querySelector('input[name="sb_pass"]');
+    var sbEmail=eEl?eEl.value.trim():'',sbPass=pEl?pEl.value:'';
+    if(!sbEmail||!sbPass){toast('Isi email dan kata sandi.');return}
+    toast(a==='sb-login'?'Masuk\u2026':'Mendaftar\u2026');
+    var sbAction=a==='sb-login'?sbLogin(sbEmail,sbPass):sbSignUp(sbEmail,sbPass);
+    sbAction.then(function(msg){toast(msg||'Berhasil masuk. Data disinkronkan.');render()}).catch(function(e){toast(sbErrorMsg(e));render()});
+  }
+  else if(a==='sb-logout')sbLogout();
+  else if(a==='sb-sync-now')sbManualSync();
+  else if(a==='sb-disconnect'){
+    confirmBox('Ganti project Supabase? Konfigurasi saat ini akan dihapus dari perangkat ini.',function(){clearSbConfig();sbUser=null;sbUnsubscribe();sbClient=null;sbSetStatus('local','Tersimpan di perangkat ini');render()},'Ganti project');
+  }
   else if(a==='drive-backup')driveBackup();
   else if(a==='drive-restore')driveRestoreOpen();
   else if(a==='drive-pick')drivePick(id);
@@ -1427,6 +1637,7 @@ document.addEventListener('change',function(e){
   render();
   setSync('local','Menyambungkan…');
   initDb();
+  sbStart();
 })();
 })();
 </script>
