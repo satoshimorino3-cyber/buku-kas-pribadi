@@ -752,7 +752,7 @@ function sbEnsureClient(){
   if(!cfg||!cfg.url||!cfg.key)throw {code:'no_config'};
   if(!sbSdkReady())throw {code:'no_sdk'};
   if(!sbClient||sbClient.__sbUrl!==cfg.url||sbClient.__sbKey!==cfg.key){
-    sbClient=window.supabase.createClient(cfg.url,cfg.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
+    sbClient=window.supabase.createClient(cfg.url,cfg.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
     try{sbClient.__sbUrl=cfg.url;sbClient.__sbKey=cfg.key}catch(e){}
   }
   return sbClient;
@@ -843,7 +843,8 @@ async function sbLogin(email,pass){
 }
 async function sbSignUp(email,pass){
   var cl=sbEnsureClient();
-  var res=await cl.auth.signUp({email:email,password:pass});
+  var redirect=(typeof location!=='undefined')?location.origin+location.pathname:undefined;
+  var res=await cl.auth.signUp({email:email,password:pass,options:redirect?{emailRedirectTo:redirect}:undefined});
   if(res.error)throw res.error;
   if(res.data&&res.data.session){
     sbUser=res.data.user;
